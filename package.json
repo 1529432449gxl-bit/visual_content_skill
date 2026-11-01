@@ -1,0 +1,16 @@
+{
+  "name": "visual-content-skill",
+  "private": true,
+  "type": "module",
+  "description": "MathAPP 嵌入式数学交互模块：运行时内核 + 脚手架 + 规范检查 + 渲染验收",
+  "scripts": {
+    "test": "node --test lib/mathviz-kit.test.mjs scripts/trace-player.test.mjs scripts/lint-module.test.mjs",
+    "new": "node scripts/new-module.mjs",
+    "lint": "node scripts/lint-module.mjs",
+    "check": "node scripts/check-render.mjs",
+    "serve": "node scripts/serve.mjs"
+  },
+  "devDependencies": {
+    "playwright": "^1.48.0"
+  }
+}

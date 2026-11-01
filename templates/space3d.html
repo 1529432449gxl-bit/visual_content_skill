@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{{TITLE}}</title>
+<style>body{margin:0;background:#f2f5f3}</style>
+</head>
+<body>
+<div id="app"></div>
+<script type="module">
+import * as MV from '{{KIT}}';
+const { THEME, ROLE, vec3, fmt, alpha } = MV;
+
+// ── 数学层 ──────────────────────────────────────────────────
+const proj = (b, a) => vec3.scale(a, vec3.dot(a, b) / Math.max(vec3.dot(a, a), 1e-12));
+
+// ── 状态层（相机不在这里：旋转视角 ≠ 改数据） ────────────────────
+const DEFAULT = Object.freeze({ mode: 'cross', a: [1.6, 0.2, 0], bz: 1.2 });
+const state = { ...DEFAULT, fill: 1 };
+const b = () => [0.5, 1.1, state.bz];
+const cam = MV.createOrbitCamera({ zUp: true, yaw: 0.9, pitch: 0.38 });
+
+// ── 外壳与控件 ───────────────────────────────────────────────
+const fig = MV.createModule('#app', { name: '{{NAME}}', height: 400 });
+const anim = MV.createAnimator(fig);
+const seg = MV.segmented(fig, [['cross', '叉乘'], ['proj', '投影']], state.mode, m => { state.mode = m; state.fill = 0; anim.tween(state, { fill: 1 }, 650); });
+const sb = MV.slider(fig, { label: 'b_z', min: -1.5, max: 1.5, step: 0.01, value: state.bz, onInput: v => { state.bz = v; fig.redraw(); } });
+MV.button(fig, '复位', () => { anim.cancelAll(); Object.assign(state, DEFAULT, { fill: 1 }); cam.reset(); seg.set(state.mode); sb.set(state.bz); fig.redraw(); });
+MV.orbitControls(fig, cam);
+
+// ── 场景 + 呈现 ─────────────────────────────────────────────
+fig.onDraw(({ ctx, width: W, height: H }) => {
+  const P = p => cam.project(p, W, H);
+  const O = P([0, 0, 0]);
+
+  // 地面网格（极淡）+ 坐标轴
+  ctx.save(); ctx.strokeStyle = alpha(THEME.ruleSoft, 0.9); ctx.lineWidth = 0.6; ctx.beginPath();
+  for (let i = -2; i <= 2; i++) {
+    let p = P([i, -2, 0]), q = P([i, 2, 0]); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y);
+    p = P([-2, i, 0]); q = P([2, i, 0]); ctx.moveTo(p.x, p.y); ctx.lineTo(q.x, q.y);
+  }
+  ctx.stroke();
+  ctx.strokeStyle = THEME.muted; ctx.lineWidth = 0.9; ctx.font = `italic 12px ${THEME.serif}`; ctx.fillStyle = THEME.inkSoft;
+  for (const [e, n] of [[[2.3, 0, 0], 'x'], [[0, 2.3, 0], 'y'], [[0, 0, 2.1], 'z']]) {
+    const q = P(e); ctx.beginPath(); ctx.moveTo(O.x, O.y); ctx.lineTo(q.x, q.y); ctx.stroke(); ctx.fillText(n, q.x + 4, q.y - 2);
+  }
+  ctx.restore();
+
+  const a = state.a, bb = b();
+  const A = P(a), B = P(bb);
+  if (state.mode === 'cross') {
+    const n = vec3.cross(a, bb);
+    fig.polygon([O, A, P(vec3.add(a, bb)), B], { fill: alpha(ROLE.primary, 0.1 * state.fill), stroke: alpha(ROLE.primary, 0.35 * state.fill), width: 1 });
+    const N = P(vec3.scale(n, MV.ease.outCubic(state.fill)));
+    const dn = fig.arrow(O, N, { color: ROLE.result, width: 1.8 });
+    if (state.fill > 0.6) fig.label('\\mathbf a\\times\\mathbf b', N, { color: ROLE.result, dir: dn.dir });
+    fig.formula('\\mathbf a\\times\\mathbf b\\perp\\mathbf a,\\ \\mathbf b,\\qquad |\\mathbf a\\times\\mathbf b|=\\text{平行四边形面积}');
+    fig.readout(`|\\mathbf a\\times\\mathbf b|=${fmt(vec3.len(n))}`);
+  } else {
+    const p = proj(bb, a), Pp = P(vec3.lerp([0, 0, 0], p, MV.ease.outCubic(state.fill)));
+    fig.polyline([B, P(p)], { color: THEME.muted, width: 1 });
+    const dp = fig.arrow(O, Pp, { color: ROLE.tertiary, width: 2.4 });
+    if (state.fill > 0.6) fig.label('\\operatorname{proj}_{\\mathbf a}\\mathbf b', Pp, { color: ROLE.tertiary, dir: { x: dp.dir.y, y: -dp.dir.x } });
+    fig.formula('\\operatorname{proj}_{\\mathbf a}\\mathbf b=\\dfrac{\\mathbf a\\cdot\\mathbf b}{\\mathbf a\\cdot\\mathbf a}\\,\\mathbf a');
+    fig.readout(`\\mathbf a\\cdot\\mathbf b=${fmt(vec3.dot(a, bb))}`);
+  }
+  const da = fig.arrow(O, A, { color: ROLE.primary });
+  const db = fig.arrow(O, B, { color: ROLE.secondary });
+  fig.label('\\mathbf a', A, { color: ROLE.primary, dir: da.dir });
+  fig.label('\\mathbf b', B, { color: ROLE.secondary, dir: db.dir });
+});
+
+MV.expose(fig, {
+  getState: () => ({ ...state, camera: { ...cam.state } }),
+  setState: s => { const { camera, ...rest } = s; Object.assign(state, rest, { fill: 1 }); if (camera) Object.assign(cam.state, camera); seg.set(state.mode); sb.set(state.bz); fig.drawNow(); },
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{{TITLE}}</title>
+<style>body{margin:0;background:#f2f5f3}</style>
+</head>
+<body>
+<div id="app"></div>
+<script type="module">
+import * as MV from '{{KIT}}';
+const { THEME, fmt, alpha } = MV;
+
+// ── 数学层：先算完整 trace，画面只回放 ─────────────────────────
+const FUNCS = {
+  cubic: { name: '三次', tex: 'x^3-2x-5', f: x => x ** 3 - 2 * x - 5, df: x => 3 * x * x - 2, view: [-1, 4, -10, 25], x0: 3.5 },
+  cos:   { name: '余弦', tex: '\\cos x-x', f: x => Math.cos(x) - x, df: x => -Math.sin(x) - 1, view: [-2, 3, -3, 2.5], x0: -1.2 },
+};
+/** 牛顿迭代 trace：每步完整快照；终止原因写清（收敛 / 导数为零 / 发散 / 上限） */
+function newtonTrace(F, x0, { maxIter = 12, tol = 1e-10 } = {}) {
+  const steps = []; let x = x0, reason = 'max_iter';
+  for (let n = 0; n <= maxIter; n++) {
+    const fx = F.f(x), d = F.df(x);
+    const next = Math.abs(d) < 1e-12 ? NaN : x - fx / d;
+    steps.push({ n, x, fx, next });
+    if (Math.abs(fx) < tol) { reason = 'tol'; steps[n].next = null; break; }
+    if (!Number.isFinite(next)) { reason = Math.abs(d) < 1e-12 ? 'zero_derivative' : 'diverged'; break; }
+    if (Math.abs(next) > 1e6) { reason = 'diverged'; break; }
+    x = next;
+  }
+  return { steps, termination: { reason } };
+}
+
+// ── 状态层 ──────────────────────────────────────────────────
+const DEFAULT = Object.freeze({ fn: 'cubic' });
+const state = { ...DEFAULT, x0: FUNCS.cubic.x0 };
+let trace, player;
+const REASON = { tol: '已收敛', zero_derivative: '导数为零，停止', diverged: '发散', max_iter: '达到迭代上限' };
+
+// ── 外壳与控件（模式 + 起点 + 单步/播放/复位） ───────────────────
+const fig = MV.createModule('#app', { name: '{{NAME}}', height: 340 });
+const anim = MV.createAnimator(fig);
+const seg = MV.segmented(fig, Object.entries(FUNCS).map(([k, v]) => [k, v.name]), state.fn, k => { state.fn = k; state.x0 = FUNCS[k].x0; rebuild(); });
+const sx = MV.slider(fig, { label: 'x_0', min: -2, max: 4, step: 0.01, value: state.x0, onInput: v => { state.x0 = v; rebuild(); } });
+MV.button(fig, '◀', () => { player.previous(); fig.redraw(); });
+MV.button(fig, '单步', () => { player.next(); fig.redraw(); });
+const playBtn = MV.button(fig, '播放', () => {
+  player.toggle(); syncPlay();
+  if (player.snapshot().playing) anim.loop(dt => { player.advance(dt); syncPlay(); return player.snapshot().playing; });
+}, { primary: true });
+MV.button(fig, '复位', () => { Object.assign(state, DEFAULT, { x0: FUNCS[DEFAULT.fn].x0 }); seg.set(state.fn); rebuild(); });
+function syncPlay() { playBtn.textContent = player.snapshot().playing ? '暂停' : '播放'; }
+
+/** 参数一变：取消播放 → 重算 trace → 回到第 0 步 */
+function rebuild() {
+  anim.cancelAll();
+  sx.set(state.x0);
+  trace = newtonTrace(FUNCS[state.fn], state.x0);
+  player = MV.createTracePlayer(trace.steps, { intervalMs: 900 });
+  syncPlay(); fig.redraw();
+}
+
+// ── 场景 + 呈现 ─────────────────────────────────────────────
+fig.onDraw(({ ctx, width, height }) => {
+  const F = FUNCS[state.fn], [xmin, xmax, ymin, ymax] = F.view;
+  const plane = MV.createPlane({ xmin, xmax, ymin, ymax, width, height });
+  const S = (x, y) => { const [px, py] = plane.toScreen(x, y); return { x: px, y: py }; };
+  fig.grid2d(plane); fig.axes2d(plane);
+  fig.curve(plane, F.f, { color: THEME.accent });
+
+  const snap = player.snapshot(), cur = snap.step;
+  // 历史步：淡化
+  for (let i = 0; i < snap.index; i++) {
+    const s = trace.steps[i];
+    fig.polyline([S(s.x, 0), S(s.x, s.fx), S(s.next, 0)], { color: THEME.warm, width: 1, alpha: 0.25 });
+  }
+  // 当前步：竖线 + 切线（播放时按 ease-out 生长，只是视觉过渡）
+  const g = snap.playing ? MV.ease.outCubic(snap.progress) : 1;
+  const top = S(cur.x, cur.fx);
+  fig.polyline([S(cur.x, 0), top], { color: THEME.muted, width: 1 });
+  if (cur.next != null && Number.isFinite(cur.next)) {
+    const end = S(MV.lerp(cur.x, cur.next, g), MV.lerp(cur.fx, 0, g));
+    fig.polyline([top, end], { color: THEME.warm, width: 1.6 });
+    if (g > 0.95) fig.point(S(cur.next, 0), { color: THEME.warm, r: 3 });
+  }
+  fig.point(top, { color: THEME.accent });
+  fig.label('x_{' + cur.n + '}', S(cur.x, 0), { color: THEME.inkSoft, dir: { x: 0, y: cur.fx > 0 ? 1 : -1 } });
+
+  fig.formula(`f(x)=${F.tex},\\qquad x_{n+1}=x_n-\\dfrac{f(x_n)}{f'(x_n)}`);
+  const tail = snap.index === snap.count - 1 ? `\\quad\\text{${REASON[trace.termination.reason]}}` : '';
+  fig.readout(`n=${cur.n},\\ x_n=${fmt(cur.x, 6)},\\ |f(x_n)|=${Math.abs(cur.fx).toExponential(2).replace(/e([+-]\d+)/, '\\times10^{$1}')}${tail}`);
+});
+
+rebuild();
+MV.expose(fig, {
+  getState: () => ({ ...state, step: player.snapshot().index, termination: trace.termination.reason }),
+  setState: s => { const { step, ...rest } = s; Object.assign(state, rest); seg.set(state.fn); rebuild(); if (step != null) player.seek(step); fig.drawNow(); },
+});
+</script>
+</body>
+</html>

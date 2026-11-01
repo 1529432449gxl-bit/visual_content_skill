@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>{{TITLE}}</title>
+<style>body{margin:0;background:#f2f5f3}</style>
+</head>
+<body>
+<div id="app"></div>
+<script type="module">
+import * as MV from '{{KIT}}';
+const { THEME, fmt } = MV;
+
+// ── 数学层：纯函数，可在 Node 里独立验算 ──────────────────────────
+const FUNCS = {
+  sin:   { name: '正弦', tex: '\\sin x', f: Math.sin, df: Math.cos, view: [-4, 4, -2, 2] },
+  cubic: { name: '三次', tex: 'x^3-2x', f: x => x ** 3 - 2 * x, df: x => 3 * x * x - 2, view: [-2.5, 2.5, -3, 3] },
+};
+
+// ── 状态层：只有这里的数据决定画面 ─────────────────────────────
+const DEFAULT = Object.freeze({ fn: 'sin', x0: 1 });
+const state = { ...DEFAULT };
+let plane = null; // 绘制时生成，供拖拽反算
+
+// ── 外壳与控件（嵌入档：模式 + 1 个参数 + 复位） ──────────────────
+const fig = MV.createModule('#app', { name: '{{NAME}}', height: 340 });
+const seg = MV.segmented(fig, Object.entries(FUNCS).map(([k, v]) => [k, v.name]), state.fn, k => { state.fn = k; clampX(); sync(); });
+const sx = MV.slider(fig, { label: 'x_0', min: -2.5, max: 2.5, step: 0.01, value: state.x0, onInput: v => { state.x0 = v; sync(); } });
+MV.button(fig, '复位', () => { Object.assign(state, DEFAULT); sync(); });
+
+function clampX() { const [a, b] = FUNCS[state.fn].view; state.x0 = MV.clamp(state.x0, a + 0.2, b - 0.2); }
+function sync() { seg.set(state.fn); sx.set(state.x0); fig.redraw(); }
+
+// ── 场景 + 呈现 ───────────────────────────────────────────────
+fig.onDraw(({ width, height }) => {
+  const F = FUNCS[state.fn];
+  const [xmin, xmax, ymin, ymax] = F.view;
+  plane = MV.createPlane({ xmin, xmax, ymin, ymax, width, height, equal: true });
+  fig.grid2d(plane);
+  fig.axes2d(plane);
+
+  const x0 = state.x0, y0 = F.f(x0), k = F.df(x0);
+  fig.curve(plane, F.f, { color: THEME.accent });
+  fig.curve(plane, x => y0 + k * (x - x0), { color: THEME.warm, width: 1.3 });
+
+  const [px, py] = plane.toScreen(x0, y0);
+  fig.point({ x: px, y: py }, { color: THEME.warm });
+
+  // 曲线名放在远离切点的一侧；挤不下就自动省略
+  const xl = x0 > (xmin + xmax) / 2 ? xmin + (xmax - xmin) * 0.15 : xmax - (xmax - xmin) * 0.15;
+  const [lx, ly] = plane.toScreen(xl, F.f(xl));
+  fig.label('y=f(x)', { x: lx, y: ly }, { color: THEME.accent, optional: true });
+  fig.label('(x_0,\\,f(x_0))', { x: px, y: py }, { color: THEME.warm });
+
+  fig.formula(`f(x)=${F.tex},\\qquad y=f(x_0)+f'(x_0)(x-x_0)`);
+  fig.readout(`f'(x_0)=${fmt(k)}`);
+});
+
+// ── 交互：拖动切点（只改 state.x0） ─────────────────────────────
+let dragging = false;
+const localX = e => e.clientX - fig.canvas.getBoundingClientRect().left;
+fig.on(fig.canvas, 'pointerdown', e => {
+  if (!plane) return;
+  const F = FUNCS[state.fn], [px, py] = plane.toScreen(state.x0, F.f(state.x0));
+  const r = fig.canvas.getBoundingClientRect();
+  if (Math.hypot(e.clientX - r.left - px, e.clientY - r.top - py) < 14) { dragging = true; fig.canvas.setPointerCapture(e.pointerId); }
+});
+fig.on(fig.canvas, 'pointermove', e => { if (dragging) { state.x0 = plane.toWorld(localX(e), 0)[0]; clampX(); sync(); } });
+fig.on(fig.canvas, 'pointerup', () => { dragging = false; });
+
+// ── 验收钩子：scripts/check-render.mjs 用它设置固定状态 ──────────
+MV.expose(fig, { getState: () => ({ ...state }), setState: s => { Object.assign(state, s); clampX(); sync(); fig.drawNow(); } });
+</script>
+</body>
+</html>
